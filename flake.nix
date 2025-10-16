@@ -1,5 +1,5 @@
 {
-  description = "Build cljfmt (weavejester/cljfmt) at tag 0.14.0 using clj-nix, with a runnable package and dev shell";
+  description = "Build cljfmt (weavejester/cljfmt) using clj-nix, with a runnable package and dev shell";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-24.05";
