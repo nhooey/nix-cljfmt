@@ -10,7 +10,7 @@ This package is currently pegged to [`weavejester/cljfmt 0.14.0`](https://github
 
 1. Lock the Clojure Nix build with `clj-nix` by running this script in a terminal (outside of any Nix shell):
 ```bash
-bin/nix-deps.lock.sh
+bin/nix-deps-lock.sh
 ```
 
 2. Enter the Nix shell:
