@@ -30,7 +30,7 @@
             # Use this repository (contains deps.edn with cljfmt dependency)
             projectSrc = ./.;
             name = "cljfmt";
-            version = "0.15.0";
+            version = "0.15.1";
             # Use wrapper namespace with :gen-class that delegates to cljfmt.main
             # This is required because mkCljApp needs :gen-class for AOT compilation
             main-ns = "cljfmt.wrapper";

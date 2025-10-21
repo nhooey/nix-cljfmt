@@ -1,4 +1,4 @@
 {:deps {io.github.weavejester/cljfmt
         {:git/url "https://github.com/weavejester/cljfmt"
-         :git/tag "0.15.0"
-         :git/sha "37a3608"}}}
+         :git/tag "0.15.1"
+         :git/sha "19d4b5c"}}}
