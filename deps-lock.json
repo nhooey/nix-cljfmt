@@ -4,10 +4,10 @@
     {
       "lib": "io.github.weavejester/cljfmt",
       "url": "https://github.com/weavejester/cljfmt",
-      "rev": "c342fc3d8815aaf720b81279255a73e13998a26d",
-      "tag": "0.14.1",
+      "rev": "37a36080a2a8a1562c1e9369731e29c97571e96c",
+      "tag": "0.15.0",
       "git-dir": "https/github.com/weavejester/cljfmt",
-      "hash": "sha256-zsTiC3z9QdWfY0g1jO0kpBitt6On0e4PKE8nUzPJKmo="
+      "hash": "sha256-95MFo/20iCAWMDboUQv4AZQ3sJXiaAi+IVsHiH4Ej4Q="
     }
   ],
   "mvn-deps": [
