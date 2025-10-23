@@ -4,7 +4,7 @@ A Nix Flake package for [`weavejester/cljfmt`](https://github.com/weavejester/cl
 
 ## Version
 
-This package is currently pegged to [`weavejester/cljfmt 0.14.0`](https://github.com/weavejester/cljfmt/releases/tag/0.14.0).
+This package is currently pegged to [`weavejester/cljfmt 0.15.2`](https://github.com/weavejester/cljfmt/releases/tag/0.15.2).
 
 ## Building
 
