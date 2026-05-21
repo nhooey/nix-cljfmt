@@ -1,5 +1,7 @@
 # nix-cljfmt
 
+[![built with garnix](https://img.shields.io/endpoint.svg?url=https%3A%2F%2Fgarnix.io%2Fapi%2Fbadges%2Fnhooey%2Fnix-cljfmt)](https://garnix.io/repo/nhooey/nix-cljfmt)
+
 A Nix Flake package for [`weavejester/cljfmt`](https://github.com/weavejester/cljfmt).
 
 ## Version
