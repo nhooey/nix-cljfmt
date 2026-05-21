@@ -1,0 +1,13 @@
+# Garnix CI configuration. https://garnix.io/docs/ci/yaml_config/
+#
+# Restricted to x86_64-linux. The flake exposes packages, apps, and a
+# devShell across eachDefaultSystem; only the x86_64-linux axis is
+# built/cached in CI here. `branch: master` restricts sandbox builds
+# to default-branch pushes — PR head commits still get Garnix
+# check-runs surfaced independently of this filter.
+builds:
+  branch: master
+  include:
+    - "packages.x86_64-linux.*"
+    - "devShells.x86_64-linux.default"
+  exclude: []
