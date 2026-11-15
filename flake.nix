@@ -6,6 +6,14 @@
     flake-utils.url = "github:numtide/flake-utils";
     clj-nix.url = "github:jlesquembre/clj-nix";
     devshell.url = "github:numtide/devshell";
+    # The builder library, not a skill: its `lib.devshellSkillsHook` wires the
+    # `skills-devshell/` sub-flake into the dev shell. The skill sources live
+    # only in that sub-flake's lock, invoked at runtime, so this flake carries
+    # no skill inputs.
+    agent-skill-flake = {
+      url = "github:nhooey/agent-skill-flake";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
   outputs =
@@ -14,12 +22,17 @@
     , flake-utils
     , clj-nix
     , devshell
+    , agent-skill-flake
     , ...
     }@inputs:
 
     flake-utils.lib.eachDefaultSystem (system:
     let
       pkgs = nixpkgs.legacyPackages.${system};
+
+      # Installs the `skills-devshell/` sub-flake's skills into `.agents/skills/`
+      # on entering the dev shell, and adds the `skills` commands.
+      devshellSkills = agent-skill-flake.lib.devshellSkillsHook { };
 
       # Build the Clojure app using clj-nix, sourcing deps from the local deps.edn.
       # The clj-nix overlay exposes the `clj-nix` namespace on pkgs.
@@ -55,6 +68,7 @@
       # Developer shell with categorized commands using numtide/devshell
       devShells.default = devshell.legacyPackages.${system}.mkShell {
         name = "nix-cljfmt-dev";
+        devshell.startup.install-skills.text = devshellSkills.startup;
         packages = [
           pkgs.git
           pkgs.jq
@@ -93,7 +107,7 @@
             help = "Show tools.deps dependency tree (if tools/alias present)";
             command = "clj -Stree || true";
           }
-        ];
+        ] ++ devshellSkills.commands;
       };
     }
     );
