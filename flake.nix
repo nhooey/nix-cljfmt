@@ -6,6 +6,10 @@
     flake-utils.url = "github:numtide/flake-utils";
     clj-nix.url = "github:jlesquembre/clj-nix";
     devshell.url = "github:numtide/devshell";
+    treefmt-nix = {
+      url = "github:numtide/treefmt-nix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
     # The builder library, not a skill: its `lib.devshellSkillsHook` wires the
     # `skills-devshell/` sub-flake into the dev shell. The skill sources live
     # only in that sub-flake's lock, invoked at runtime, so this flake carries
@@ -22,6 +26,7 @@
     , flake-utils
     , clj-nix
     , devshell
+    , treefmt-nix
     , agent-skill-flake
     , ...
     }@inputs:
@@ -53,8 +58,36 @@
         ];
       };
 
+      # `nix fmt` formats the tree; `checks.formatting` fails on any file it
+      # would change. The pinned nixpkgs' `treefmt` and `nixfmt` are the old
+      # v0.6 runner and the classic formatter, hence the explicit packages.
+      # Clojure is formatted by the cljfmt this flake builds.
+      treefmtEval = treefmt-nix.lib.evalModule pkgs {
+        projectRootFile = "flake.nix";
+        package = pkgs.treefmt2;
+        programs.nixfmt = {
+          enable = true;
+          package = pkgs.nixfmt-rfc-style;
+        };
+        # The skills sub-flake follows agent-skill-flake's layout, which a
+        # newer nixfmt than this nixpkgs' keeps. Excluded per formatter:
+        # treefmt 2.0.0-rc2 ignores the top-level `excludes` key.
+        settings.formatter.nixfmt.excludes = [ "skills-devshell/*" ];
+        programs.shfmt = {
+          enable = true;
+          indent_size = 2;
+        };
+        programs.cljfmt = {
+          enable = true;
+          package = cljfmt-app;
+        };
+      };
+
     in
     {
+      formatter = treefmtEval.config.build.wrapper;
+      checks.formatting = treefmtEval.config.build.check self;
+
       # Expose the cljfmt app as our default package
       packages.default = cljfmt-app;
       packages.cljfmt = cljfmt-app;
