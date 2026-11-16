@@ -1,0 +1,332 @@
+#!/usr/bin/env python3
+"""Maintain the cljfmt release this flake packages.
+
+The cljfmt version is written in four files: `deps.edn` (the git tag and
+short sha clj-nix builds from), `deps-lock.json` (generated from `deps.edn`),
+`flake.nix` (the package's version) and `README.md`. This tool reads, checks
+and bumps it in all of them and regenerates the lock file.
+
+Commands:
+  version [--check] [--json]       print the version each file states
+  bump VERSION [--sha SHA] [--no-lock] [--dry-run]
+                                   point every file at another cljfmt tag
+  lock [--dry-run]                 regenerate deps-lock.json from deps.edn
+
+Examples:
+  nix-cljfmt version --check
+  nix-cljfmt bump 0.15.3 --dry-run
+  nix-cljfmt lock
+
+Exit status: 0 on success, 1 when a check or a command it runs fails,
+2 on bad usage.
+
+Only the standard library is used, so `bin/nix-cljfmt` also runs outside
+the dev shell, given `python3`, `git` and `nix` on `PATH`.
+"""
+
+from __future__ import annotations
+
+import argparse
+import difflib
+import json
+import os
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+UPSTREAM_URL = "https://github.com/weavejester/cljfmt"
+UPSTREAM_LIB = "io.github.weavejester/cljfmt"
+SHORT_SHA_LENGTH = 7
+LOCK_COMMAND = ("nix", "run", "github:jlesquembre/clj-nix#deps-lock")
+LOCK_ENV = {"CLJNIX_ADD_NIX_STORE": "true"}
+
+DEPS_EDN = "deps.edn"
+DEPS_LOCK = "deps-lock.json"
+FLAKE = "flake.nix"
+README = "README.md"
+FILES = (DEPS_EDN, DEPS_LOCK, FLAKE, README)
+
+DEPS_TAG_RE = re.compile(r'(:git/tag\s+")([^"]+)(")')
+DEPS_SHA_RE = re.compile(r'(:git/sha\s+")([^"]+)(")')
+FLAKE_VERSION_RE = re.compile(r'(\bversion\s*=\s*")([^"]+)(";)')
+README_VERSION_RE = re.compile(
+    r"(`weavejester/cljfmt )([^`]+)(`\]\("
+    + re.escape(UPSTREAM_URL)
+    + r"/releases/tag/)([^)]+)(\))"
+)
+
+
+class ToolError(Exception):
+    """A failure to report on stderr with exit status 1."""
+
+
+# Pure core: reading, checking and rewriting the files' text.
+
+
+def deps_edn_version(text: str) -> str | None:
+    match = DEPS_TAG_RE.search(text)
+    return match.group(2) if match else None
+
+
+def deps_lock_version(text: str) -> str | None:
+    try:
+        lock = json.loads(text)
+    except json.JSONDecodeError:
+        return None
+    for dep in lock.get("git-deps", []):
+        if dep.get("lib") == UPSTREAM_LIB:
+            return dep.get("tag")
+    return None
+
+
+def flake_version(text: str) -> str | None:
+    match = FLAKE_VERSION_RE.search(text)
+    return match.group(2) if match else None
+
+
+def readme_version(text: str) -> str | None:
+    """The README's version, or None if it's missing or its link disagrees."""
+    match = README_VERSION_RE.search(text)
+    if not match or match.group(2) != match.group(4):
+        return None
+    return match.group(2)
+
+
+READERS = {
+    DEPS_EDN: deps_edn_version,
+    DEPS_LOCK: deps_lock_version,
+    FLAKE: flake_version,
+    README: readme_version,
+}
+
+
+def versions(texts: dict[str, str]) -> dict[str, str | None]:
+    """The version each file states, None where it states none."""
+    return {name: READERS[name](texts[name]) for name in FILES}
+
+
+def disagreements(found: dict[str, str | None]) -> list[str]:
+    """Messages naming each file that doesn't state `deps.edn`'s version."""
+    want = found[DEPS_EDN]
+    if want is None:
+        return [f"{DEPS_EDN}: no :git/tag found"]
+    return [
+        f"{name}: states {found[name] or 'no version'}, {DEPS_EDN} has {want}"
+        for name in FILES
+        if found[name] != want
+    ]
+
+
+def _replace_once(pattern: re.Pattern, text: str, name: str, repl) -> str:
+    new, count = pattern.subn(repl, text)
+    if count != 1:
+        raise ToolError(f"{name}: expected one match for {pattern.pattern}, found {count}")
+    return new
+
+
+def bumped_texts(texts: dict[str, str], version: str, sha: str) -> dict[str, str]:
+    """The new text of each hand-edited file, pointed at `version` at `sha`."""
+    short = sha[:SHORT_SHA_LENGTH]
+    deps = _replace_once(DEPS_TAG_RE, texts[DEPS_EDN], DEPS_EDN, rf"\g<1>{version}\g<3>")
+    deps = _replace_once(DEPS_SHA_RE, deps, DEPS_EDN, rf"\g<1>{short}\g<3>")
+    flake = _replace_once(FLAKE_VERSION_RE, texts[FLAKE], FLAKE, rf"\g<1>{version}\g<3>")
+    readme = _replace_once(
+        README_VERSION_RE,
+        texts[README],
+        README,
+        rf"\g<1>{version}\g<3>{version}\g<5>",
+    )
+    return {DEPS_EDN: deps, FLAKE: flake, README: readme}
+
+
+def tag_sha(ls_remote_output: str, tag: str) -> str:
+    """The commit a tag names, from `git ls-remote` output for that tag.
+
+    An annotated tag's peeled `^{}` line names the commit, so it wins over
+    the tag object's own line.
+    """
+    refs = {}
+    for line in ls_remote_output.splitlines():
+        parts = line.split()
+        if len(parts) == 2:
+            refs[parts[1]] = parts[0]
+    ref = f"refs/tags/{tag}"
+    sha = refs.get(ref + "^{}") or refs.get(ref)
+    if sha is None:
+        raise ToolError(f"no tag {tag} at {UPSTREAM_URL}")
+    return sha
+
+
+def valid_sha(sha: str) -> bool:
+    return re.fullmatch(r"[0-9a-f]{7,40}", sha) is not None
+
+
+def diff(name: str, old: str, new: str) -> str:
+    """A unified diff of one file's change, as `git diff` would show it."""
+    return "".join(
+        difflib.unified_diff(
+            old.splitlines(keepends=True),
+            new.splitlines(keepends=True),
+            fromfile=f"a/{name}",
+            tofile=f"b/{name}",
+        )
+    )
+
+
+def format_versions(found: dict[str, str | None]) -> str:
+    width = max(len(name) for name in FILES)
+    return "\n".join(f"{name:<{width}}  {found[name] or '-'}" for name in FILES)
+
+
+def lock_plan() -> str:
+    env = " ".join(f"{key}={value}" for key, value in LOCK_ENV.items())
+    return f"{env} {' '.join(LOCK_COMMAND)}"
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="nix-cljfmt",
+        description="Check, bump and lock the cljfmt release this flake packages.",
+        epilog="Example: nix-cljfmt bump 0.15.3 --dry-run",
+    )
+    parser.add_argument(
+        "--root",
+        type=Path,
+        help="the repository to work on (default: the git checkout around the working directory)",
+    )
+    commands = parser.add_subparsers(dest="command", required=True, metavar="COMMAND")
+
+    version = commands.add_parser(
+        "version",
+        help="print the cljfmt version each file states",
+        description=f"Print the cljfmt version stated in {', '.join(FILES)}.",
+        epilog="Example: nix-cljfmt version --check",
+    )
+    version.add_argument(
+        "--check",
+        action="store_true",
+        help=f"exit 1, naming each file, unless all agree with {DEPS_EDN}",
+    )
+    version.add_argument("--json", action="store_true", help="print the versions as JSON")
+
+    bump = commands.add_parser(
+        "bump",
+        help="point every file at another cljfmt tag and relock",
+        description=(
+            f"Set the cljfmt tag and sha in {DEPS_EDN}, the version in {FLAKE} and "
+            f"{README}, then regenerate {DEPS_LOCK} as `lock` does."
+        ),
+        epilog="Example: nix-cljfmt bump 0.15.3 --dry-run",
+    )
+    bump.add_argument("version", metavar="VERSION", help="the upstream git tag, such as 0.15.3")
+    bump.add_argument(
+        "--sha",
+        help=f"the tag's commit (default: looked up with git ls-remote {UPSTREAM_URL})",
+    )
+    bump.add_argument("--no-lock", action="store_true", help=f"leave {DEPS_LOCK} alone")
+    bump.add_argument(
+        "--dry-run", action="store_true", help="print the changes instead of writing them"
+    )
+
+    lock = commands.add_parser(
+        "lock",
+        help=f"regenerate {DEPS_LOCK} from {DEPS_EDN}",
+        description=f"Regenerate {DEPS_LOCK} from {DEPS_EDN} by running: {lock_plan()}",
+        epilog="Example: nix-cljfmt lock",
+    )
+    lock.add_argument(
+        "--dry-run", action="store_true", help="print the command instead of running it"
+    )
+    return parser
+
+
+# Shell: files, subprocesses and output.
+
+
+def find_root(given: Path | None) -> Path:
+    if given is not None:
+        return given
+    result = subprocess.run(
+        ["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True
+    )
+    if result.returncode != 0:
+        raise ToolError("not in a git checkout; pass --root")
+    return Path(result.stdout.strip())
+
+
+def read_texts(root: Path) -> dict[str, str]:
+    try:
+        return {name: (root / name).read_text() for name in FILES}
+    except FileNotFoundError as error:
+        raise ToolError(f"{error.filename}: not found; is --root this repository?")
+
+
+def lookup_sha(version: str) -> str:
+    result = subprocess.run(
+        ["git", "ls-remote", UPSTREAM_URL, f"refs/tags/{version}", f"refs/tags/{version}^{{}}"],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        raise ToolError(f"git ls-remote {UPSTREAM_URL} failed: {result.stderr.strip()}")
+    return tag_sha(result.stdout, version)
+
+
+def run_lock(root: Path, dry_run: bool) -> None:
+    if dry_run:
+        print(f"would run in {root}: {lock_plan()}")
+        return
+    print(f"running: {lock_plan()}", file=sys.stderr)
+    result = subprocess.run(LOCK_COMMAND, cwd=root, env={**os.environ, **LOCK_ENV})
+    if result.returncode != 0:
+        raise ToolError(f"{' '.join(LOCK_COMMAND)} exited {result.returncode}")
+
+
+def cmd_version(root: Path, args: argparse.Namespace) -> int:
+    found = versions(read_texts(root))
+    print(json.dumps(found, indent=2) if args.json else format_versions(found))
+    if args.check:
+        problems = disagreements(found)
+        for problem in problems:
+            print(problem, file=sys.stderr)
+        return 1 if problems else 0
+    return 0
+
+
+def cmd_bump(root: Path, args: argparse.Namespace) -> int:
+    sha = args.sha or lookup_sha(args.version)
+    if not valid_sha(sha):
+        raise ToolError(f"--sha {sha}: not a hex commit id")
+    old = read_texts(root)
+    new = bumped_texts(old, args.version, sha)
+    for name, text in new.items():
+        if args.dry_run:
+            print(diff(name, old[name], text), end="")
+        else:
+            (root / name).write_text(text)
+            print(f"wrote {name}")
+    if not args.no_lock:
+        run_lock(root, args.dry_run)
+    return 0
+
+
+def cmd_lock(root: Path, args: argparse.Namespace) -> int:
+    run_lock(root, args.dry_run)
+    return 0
+
+
+COMMANDS = {"version": cmd_version, "bump": cmd_bump, "lock": cmd_lock}
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    try:
+        return COMMANDS[args.command](find_root(args.root), args)
+    except ToolError as error:
+        print(f"nix-cljfmt: {error}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
