@@ -81,7 +81,7 @@
             name = "cljfmt";
             category = "clojure";
             help = "Run cljfmt (built via clj-nix)";
-            command = "${cljfmt-app}/bin/cljfmt";
+            command = ''${cljfmt-app}/bin/cljfmt "$@"'';
           }
           {
             name = "repl";
