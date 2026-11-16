@@ -90,6 +90,17 @@
         formatter = treefmtEval.config.build.wrapper;
         checks.formatting = treefmtEval.config.build.check self;
 
+        # Runs cljfmt check and fix on good and misindented code through the
+        # package's binary and through the dev shell's commands.
+        checks.smoke = pkgs.runCommand "cljfmt-smoke" { nativeBuildInputs = [ pkgs.bash ]; } ''
+          export HOME=$TMPDIR
+          bash ${./tests/smoke.sh} \
+            ${cljfmt-app} \
+            ${self.devShells.${system}.default} \
+            ${cljfmt-app.version}
+          touch $out
+        '';
+
         # Expose the cljfmt app as our default package
         packages.default = cljfmt-app;
         packages.cljfmt = cljfmt-app;
