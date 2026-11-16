@@ -60,6 +60,18 @@
           ];
         };
 
+        # `nix-cljfmt`: checks, bumps and relocks the packaged cljfmt version.
+        # The script stays runnable as `bin/nix-cljfmt` outside the dev shell,
+        # which can't build while `deps.edn` and `deps-lock.json` disagree.
+        nix-cljfmt = pkgs.writeShellApplication {
+          name = "nix-cljfmt";
+          runtimeInputs = [
+            pkgs.git
+            pkgs.python3
+          ];
+          text = ''exec python3 ${./bin/nix-cljfmt} "$@"'';
+        };
+
         # `nix fmt` formats the tree; `checks.formatting` fails on any file it
         # would change. The pinned nixpkgs' `treefmt` and `nixfmt` are the old
         # v0.6 runner and the classic formatter, hence the explicit packages.
@@ -98,6 +110,17 @@
             ${cljfmt-app} \
             ${self.devShells.${system}.default} \
             ${cljfmt-app.version}
+          touch $out
+        '';
+
+        # Runs nix-cljfmt's unit tests, and checks through the dev shell's
+        # wrapper that every file states the same cljfmt version.
+        checks.nix-cljfmt = pkgs.runCommand "nix-cljfmt-tests" { nativeBuildInputs = [ pkgs.python3 ]; } ''
+          export PYTHONDONTWRITEBYTECODE=1
+          cp -r ${./bin} bin
+          cp -r ${./tests} tests
+          python3 -m unittest discover -s tests
+          ${nix-cljfmt}/bin/nix-cljfmt --root ${self} version --check
           touch $out
         '';
 
@@ -152,6 +175,12 @@
               category = "diagnostics";
               help = "Show tools.deps dependency tree (if tools/alias present)";
               command = "clj -Stree || true";
+            }
+            {
+              name = "nix-cljfmt";
+              category = "maintenance";
+              help = "Check, bump and relock the packaged cljfmt version (version, bump, lock)";
+              package = nix-cljfmt;
             }
           ] ++ devshellSkills.commands;
         };
