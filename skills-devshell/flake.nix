@@ -11,23 +11,21 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
-    # Skill sources, the same repos `github:nhooey/skillspkgs` aggregates.
-    # They follow `nixpkgs` but not `agent-skill-flake`, so each keeps its own
-    # compatible builder.
-    coding-agent-skills = {
-      url = "github:nhooey/coding-agent-skills";
+    # Skill sources. They follow `nixpkgs` but not `agent-skill-flake`, so
+    # each keeps its own compatible builder.
+
+    # The `nix-tooling` family's combination from skillspkgs: this
+    # repository's one shared skill source.
+    skillspkgs-combinations = {
+      url = "github:nhooey/skillspkgs?dir=sources/combinations";
       inputs.nixpkgs.follows = "nixpkgs";
+      inputs.nix-skills.follows = "nix-skills";
     };
-    git-skills = {
-      url = "github:nhooey/git-skills";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
+
+    # For the Clojure addition below. The combination's nix-skills follows
+    # it, so one revision lands in the shell.
     nix-skills = {
       url = "github:nhooey/nix-skills";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
-    shell-skills = {
-      url = "github:nhooey/shell-skills";
       inputs.nixpkgs.follows = "nixpkgs";
     };
   };
@@ -43,28 +41,12 @@
       systems = import inputs.systems;
       name = "nix-cljfmt-devshell";
       sources = [
-        # Commits, branches and pull requests.
-        { source = inputs.git-skills; }
-        # Writing and bumping this flake, and packaging cljfmt with clj-nix.
+        { source = inputs.skillspkgs-combinations.combinations.nix-tooling; }
+        # Addition: this repository packages cljfmt with clj-nix, and no other
+        # nix-tooling repository builds Clojure.
         {
           source = inputs.nix-skills;
-          skills = [
-            "nix-clojure"
-            "nix-flakes"
-            "nix-flake-recursive-bump-input-versions"
-          ];
-        }
-        # Safe shell commands: named deletes, PIDs, no machine-wide changes.
-        { source = inputs.shell-skills; }
-        # Running as a headless session in this checkout, keeping the
-        # scratchpad tidy, and the cross-repository plan's graph.
-        {
-          source = inputs.coding-agent-skills;
-          skills = [
-            "coding-agent-headless-in-checkout"
-            "coding-agent-plans-as-graph"
-            "coding-agent-scratchpad-scripts"
-          ];
+          skills = [ "nix-clojure" ];
         }
       ];
     };
